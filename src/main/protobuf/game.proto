@@ -1,0 +1,203 @@
+syntax = "proto2";
+
+package protos.soc;
+
+import "inventory.proto";
+import "board.proto";
+import "state.proto";
+import "moves.proto";
+
+service CatanServer {
+  rpc CreateGame(CreateGameRequest) returns (CreateGameResponse);
+  rpc StartGame(StartGameRequest) returns (StartGameResponse);
+  rpc Subscribe(SubscribeRequest) returns (stream GameMessage);
+  rpc TakeAction(TakeActionRequest) returns (MoveResponse);
+  rpc GetAllMoves(GetMovesRequest) returns (GetMovesResponse);
+
+}
+
+/**
+ * A GameMessage is the datum streamed from the Catan game server to all subscribers (genearlly players)
+ * The GameMessage comes in one of two flavors. Either it is an ActionRequest or a GameEvent.
+ * An ActionRequest specifies the player which should perform an action and what type of action.
+ * The GameEvent reflects the result of an action taken by a player, or otherwise an update from the server to players.
+ * For example, proposing a trade is a GameEvent, even though no game state has changed.
+ * Similarly, notifying players the game has started or ended is a GameEvent (even though no game state has changed).
+ * Further examples of "stateless" changes are turns ending or a roll on which no player picks up resources.
+ * More typical of a GameEvent, is a corresponding state change. In these cases, the result field of the GameEvent will be populated.
+ * In nearly all cases, the GameEvent is directly triggered by a TakeActionRequest.
+ */
+message GameMessage {
+    required Player player = 1;
+    oneof payload {
+        ActionRequest request = 2;
+        ActionResult result = 3;
+  }
+}
+
+/**
+ * GameMessage targeted at a specific player, telling that player a specific action is requested.
+ **/
+ message ActionRequest {
+  enum ActionRequestType {
+    ACKNOWLEDGE_PING = 0;
+    ACKNOWLEDGE_START_GAME = 1;
+    PLACE_INITIAL_SETTLEMENT = 2;
+    START_TURN = 3;
+    BUILD_OR_TRADE_OR_PLAY_OR_PASS = 4;
+    MOVE_ROBBER = 5;
+    DISCARD = 6;
+    EVALUATE_TRADE = 7;
+    COUNTER_OR_ACKNOWLEDGE_TRADE = 8;
+    PROPOSE_TRADE_OR_PASS = 9;
+  }
+  required ActionRequestType type = 2;
+  optional PublicGameState public_game_state = 3;
+  optional Inventory inventory = 4;
+}
+
+
+/**
+ * Encapsulates a GameEvent response from the Catan game server.
+ * All fields are optional (leaving the action blank will default it to the enum value 0 GAME_ACTION_NONE).
+ * Depending on the type of action, different combinations of fields will be specified.
+ * Examples:
+ * GameEvent {
+ *   position:-1, 
+ *   action: GAME_ACTION_NONE,
+ *   specification: null,
+ *   result: null,
+ *   message: "GAME END"
+ *  }
+ * GameEvent {
+ *   position: 2
+ *   action: MOVE_ROBBER_AND_STEAL,
+ *   specification: {hex: B4, other_player_positions: [1]},
+ *   result: {card: HiddenCard{ viewable_by_positions: [1, 2], encrypted_name: "askdgi4858fjmcd39932"}},
+ *   message: null
+ * }
+ * GameEvent {
+ *   position: 2
+ *   action: ACTIVATE_MONOPOLY,
+ *   specification: {ask: ORE},
+ *   result: {resources_transacted: {
+ *     1: {gain: [], lose: [ORE, ORE, ORE, ORE]},
+ *     2: {gain: [ORE, ORE, ORE, ORE, ORE, ORE], lose: []},
+ *     3: {gain: [], lose: [ORE, ORE]},
+ *     4: {gain: [] lose: []},
+ *   message: null
+ * }
+ * GameEvent {
+ *   position: 3, 
+ *   action: BUILD_CITY,
+ *   specification: {vertex: B4R},
+ *   result: {resources_transacted: {
+ *     1: {gain: [], lose: []},
+ *     2: {gain: [], lose: []},
+ *     3: { gain: [], lose: [ORE, ORE, ORE, WHEAT, WHEAT]},
+ *     4: {gain: [] lose: []},
+ *   message: null
+ *  }
+ * Important to note, is that multiple actions are able to recycle specification.
+ * For example, BUILD_CITY and BUILD_ROAD have the same specification.
+ * Similarly proposing a trade, making a trade, playing a monopoly or a year of plenty
+ * all take advantage of one or both of the `ask` and `give` fields in the ActionSpecification.
+ **/
+//message GameEvent {
+//  int32 position = 1; // Player positions on the server need to be 1 not 0 based, so 0 can indicate no position, or we can pass -1
+//  GameAction action = 2;
+//  ActionSpecification specification = 3;
+//  ActionResult result = 4;
+//  string message = 5;
+//}
+
+/**
+ * Defines the action a player wants to make.
+ * Is used both in the TakeAction RPC and in the GameEvent response.
+ * Of note, like the GameAction enum, the ActionSpecification object used in the TaekAction RPC
+ * is directly piped through into the GameEvent response.
+ * The GameEvent response might optionally also inlcude a result.
+ * Depending on the action being taken, different combinations of the below fields will be specified.
+ * For more inforamtion see GameEvent.
+ **/
+
+
+
+/**
+ * Specifies the result of a TakeAction RPC call.
+ * Used as a subfield of the GameEvent response.
+ * Depending on the GameAction, there is a different payload, as specified in the mapping below.
+ * For more inforamtion see GameEvent.
+ **/
+//message ActionResult {
+//  int32 roll = 1;
+//  HiddenCard card = 2;
+//  map<int32, ResourceTransaction> resources_transacted = 3; // Only shows publically transacted resources
+//}
+
+
+/**
+ * Specifies the action a player woiuld like to take.
+ * Must include an action field, and certain action require a specification.
+ * For more details see GameAction and ActionSpecification.
+ **/
+message TakeActionRequest {
+  required string game_id = 1;
+  required int32 position = 2;
+  required ActionSpecification action = 3;
+}
+
+message SubscribeRequest {
+    required string game_id = 1;
+    required string name = 2;
+    enum SubscriptionType {
+      PLAYER = 0;
+      OBSERVER = 1;
+  }
+  required SubscriptionType type = 3;
+  optional int32 position = 4; // Optional, raises an exception if type = OBSERVER. If not supplied default to next open position.
+}
+
+message MoveResponse {
+  // We can make this response richer
+  required string status = 1; // ACCEPTED, NOT_YOUR_TURN, ILLEGAL_MOVE etc.
+}
+
+message CreateGameRequest {
+  // In the future this could take a board configuration
+  // Or an existing saved board state
+  // Or even the strategies
+  // It could also take settings about the game (like where to output the results)
+  // maybe string status?
+}
+
+message CreateGameResponse {
+  required string game_id = 1;
+}
+
+message StartGameRequest {
+  required string game_id = 1;
+}
+
+message StartGameResponse {
+    required bool successful = 1;
+
+    // Maybe string status
+}
+
+message GetMovesRequest {
+    required int32 position = 1;
+    required PublicGameState game_state = 2;
+    required PrivateInventory private_inventory = 3;
+}
+
+message GetMovesResponse {
+    repeated ActionSpecification actions = 1;
+}
+
+enum GameStatus {
+    WAITING_FOR_PLAYERS = 0;
+    PLAYING = 1;
+    FINISHED = 2;
+    IN_QUEUE = 3;
+}
